@@ -1,113 +1,369 @@
-import Image from 'next/image'
+'use client'
+
+import { CryptoDevsDAOABI, CryptoDevsDAOAddress, CryptoDevsNFTABI, CryptoDevsNFTAddress } from "@/lib/constants"
+import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { formatEther } from "viem/utils";
+import { useAccount, useBalance, useContractRead } from "wagmi";
+import { readContract, waitForTransaction, writeContract } from "wagmi/actions";
+import styles from "../app/styles/Home.module.css";
+import { useEffect, useState } from "react";
 
 export default function Home() {
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 max-w-5xl w-full items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">src/app/page.tsx</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:h-auto lg:w-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{' '}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
+  // Check if the user's wallet is connected, 
+  // and it's address using Wagmi's hooks.
+  const account = useAccount()
+
+  // State variable to know if the component has been mounted yet or not
+  const [ isMounted, setIsMounted ] = useState(false)
+  
+  // State variable to show loading state when waiting
+  // for a transaction to go through
+  const [ loading, setLoading ] = useState(false)
+
+  // Fake NFT Token ID to purchase. Used when creating a proposal.
+  const [ fakeNftTokenId, setFakeNftTokenId ] = useState("")
+
+  // State variable to store all proposals in the DAO
+  const [ proposals, setProposals ] = useState<any[]>([])
+
+  // State variable to switch between the 'Create Proposal' and 'View Proposals' tabs
+  const [ selectedTab, setSelectedTab ] = useState("")
+
+  // fetch the owner of the DAO
+  const daoOwner = useContractRead({
+    abi: CryptoDevsDAOABI,
+    address: CryptoDevsDAOAddress,
+    functionName: 'owner'
+  })
+
+  // Fetch the balance of the DAO
+  const daoBalance = useBalance({
+    address: CryptoDevsDAOAddress
+  })
+
+  // Fetch the number of proposals in the DAO
+  const numOfProposalsInDAO = useContractRead({
+    abi: CryptoDevsDAOABI,
+    address: CryptoDevsDAOAddress,
+    functionName: 'numProposals'
+  })
+
+  // Fetch the CryptoDevs NFT balance of the user
+  const nftBalanceOfUser = useContractRead({
+    abi: CryptoDevsNFTABI,
+    address: CryptoDevsNFTAddress,
+    functionName: 'balanceOf',
+    args: [ account.address ]
+  })
+
+  // Function to make a createProposal transaction in the DAO
+  async function createProposal(){
+    setLoading(true)
+
+    try{
+      const tx = await writeContract({
+        address: CryptoDevsDAOAddress,
+        abi: CryptoDevsDAOABI,
+        functionName: 'createProposal',
+        args: [fakeNftTokenId]
+      })
+
+      await waitForTransaction(tx)
+    } catch(error) {
+      console.error(error);
+      window.alert(error)
+    }
+
+    setLoading(false)
+  }
+
+  // Function to fetch a proposal by it's ID
+  async function fetchProposalById(id: any) {
+    try{
+      const proposal = await readContract({
+        address: CryptoDevsDAOAddress,
+        abi: CryptoDevsDAOABI,
+        functionName: 'proposals',
+        args: [id]
+      })
+
+      // @ts-ignore
+      const [nftTokenId, deadline, yayVotes, nayVotes, executed] = proposal
+      const parsedProposal = {
+        proposalId: id,
+        nftTokenId: nftTokenId.toString(),
+        deadline: new Date(parseInt(deadline.toString()) * 1000),
+        yayVotes: yayVotes.toString(),
+        nayVotes: nayVotes.toString(),
+        executed: Boolean(executed),
+      }
+
+      return parsedProposal
+    } catch(error) {
+      console.error(error);
+      window.alert(error)
+    }
+  }
+
+  async function fetchAllProposal() {
+    try{
+      const proposals = []
+      //@ts-ignore
+      for(let i = 0; i < numOfProposalsInDAO.data; i++){
+        const proposal = await fetchProposalById(i)
+        proposals.push(proposal)
+      }
+
+      setProposals(proposals)
+      return proposals
+    } catch(error){
+      console.error(error);
+      window.alert(error)
+    }
+  }
+
+  async function voteForProposal(proposalId: any, vote: any) {
+    setLoading(true)
+    try{
+      const tx = await writeContract({
+        address: CryptoDevsDAOAddress,
+        abi: CryptoDevsDAOABI,
+        functionName: 'voteOnProposal',
+        args: [proposalId, vote === 'YAY' ? 0 : 1]
+      })
+
+      await waitForTransaction(tx)
+    } catch(error) {
+      console.error(error);
+      window.alert(error)
+    }
+  }
+
+    // Function to execute a proposal after deadline has been exceeded
+    async function executeProposal(proposalId: any) {
+      setLoading(true);
+      try {
+        const tx = await writeContract({
+          address: CryptoDevsDAOAddress,
+          abi: CryptoDevsDAOABI,
+          functionName: "executeProposal",
+          args: [proposalId],
+        });
+  
+        await waitForTransaction(tx);
+      } catch (error) {
+        console.error(error);
+        window.alert(error);
+      }
+      setLoading(false);
+    }
+
+    // Function to withdraw ether from the DAO contract
+  async function withdrawDAOEther() {
+    setLoading(true);
+    try {
+      const tx = await writeContract({
+        address: CryptoDevsDAOAddress,
+        abi: CryptoDevsDAOABI,
+        functionName: "withdrawEther",
+        args: [],
+      });
+
+      await waitForTransaction(tx);
+    } catch (error) {
+      console.error(error);
+      window.alert(error);
+    }
+    setLoading(false);
+  }
+
+  function rendertTabs() {
+    if(selectedTab === 'Create Proposal'){
+      return renderCreateProposalTab()
+    } else {
+      return renderViewProposalsTab()
+    }
+  }
+
+   // Renders the 'Create Proposal' tab content
+   function renderCreateProposalTab() {
+    if (loading) {
+      return (
+        <div className={styles.description}>
+          Loading... Waiting for transaction...
         </div>
+      );
+    } else if (nftBalanceOfUser.data === 0) {
+      return (
+        <div className={styles.description}>
+          You do not own any CryptoDevs NFTs. <br />
+          <b>You cannot create or vote on proposals</b>
+        </div>
+      );
+    } else {
+      return (
+        <div className={styles.container}>
+          <label>Fake NFT Token ID to Purchase: </label>
+          <input
+            placeholder="0"
+            type="number"
+            onChange={(e) => setFakeNftTokenId(e.target.value)}
+          />
+          <button className={styles.button2} onClick={createProposal}>
+            Create
+          </button>
+        </div>
+      );
+    }
+  }
+
+    // Renders the 'View Proposals' tab content
+    function renderViewProposalsTab() {
+      if (loading) {
+        return (
+          <div className={styles.description}>
+            Loading... Waiting for transaction...
+          </div>
+        );
+      } else if (proposals.length === 0) {
+        return (
+          <div className={styles.description}>No proposals have been created</div>
+        );
+      } else {
+        return (
+          <div>
+            {proposals.map((p, index) => (
+              <div key={index} className={styles.card}>
+                <p>Proposal ID: {p.proposalId}</p>
+                <p>Fake NFT to Purchase: {p.nftTokenId}</p>
+                <p>Deadline: {p.deadline.toLocaleString()}</p>
+                <p>Yay Votes: {p.yayVotes}</p>
+                <p>Nay Votes: {p.nayVotes}</p>
+                <p>Executed?: {p.executed.toString()}</p>
+                {p.deadline.getTime() > Date.now() && !p.executed ? (
+                  <div className={styles.flex}>
+                    <button
+                      className={styles.button2}
+                      onClick={() => voteForProposal(p.proposalId, "YAY")}
+                    >
+                      Vote YAY
+                    </button>
+                    <button
+                      className={styles.button2}
+                      onClick={() => voteForProposal(p.proposalId, "NAY")}
+                    >
+                      Vote NAY
+                    </button>
+                  </div>
+                ) : p.deadline.getTime() < Date.now() && !p.executed ? (
+                  <div className={styles.flex}>
+                    <button
+                      className={styles.button2}
+                      onClick={() => executeProposal(p.proposalId)}
+                    >
+                      Execute Proposal{" "}
+                      {p.yayVotes > p.nayVotes ? "(YAY)" : "(NAY)"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className={styles.description}>Proposal Executed</div>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      }
+    }
+
+    // Piece of code that runs everytime the value of `selectedTab` changes
+    // Used to re-fetch all proposals in the DAO when user switches
+   // to the 'View Proposals' tab
+   useEffect(() => {
+    if (selectedTab === "View Proposals") {
+      fetchAllProposal();
+    }
+  }, [selectedTab]);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  if (!isMounted) return null;
+
+
+  if (!account.isConnected)
+    return (
+      <div className="flex flex-col items-center justify-center h-screen">
+        <ConnectButton />
       </div>
+    );
+  
 
-      <div className="relative flex place-items-center before:absolute before:h-[300px] before:w-[480px] before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-[240px] after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700 before:dark:opacity-10 after:dark:from-sky-900 after:dark:via-[#0141ff] after:dark:opacity-40 before:lg:h-[360px] z-[-1]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
+
+
+
+
+
+  return (
+    <div className={styles.main}>
+    <div>
+      <h1 className={styles.title}>Welcome to Crypto Devs!</h1>
+      <div className={styles.description}>Welcome to the DAO!</div>
+      <div className={styles.description}>
+        Your CryptoDevs NFT Balance: {
+            // @ts-ignore
+            nftBalanceOfUser.data.toString()
+        }
+        <br />
+        {daoBalance.data && (
+          <>
+            Treasury Balance:{" "}
+            {formatEther(daoBalance.data.value).toString()} ETH
+          </>
+        )}
+        <br />
+        Total Number of Proposals: { 
+           // @ts-ignore
+           numOfProposalsInDAO.data.toString()
+        }
       </div>
-
-      <div className="mb-32 grid text-center lg:max-w-5xl lg:w-full lg:mb-0 lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
+      <div className={styles.flex}>
+        <button
+          className={styles.button}
+          onClick={() => setSelectedTab("Create Proposal")}
         >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Docs{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
-
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
+          Create Proposal
+        </button>
+        <button
+          className={styles.button}
+          onClick={() => setSelectedTab("View Proposals")}
         >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Learn{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Templates{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Explore starter templates for Next.js.
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Deploy{' '}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
+          View Proposals
+        </button>
       </div>
-    </main>
+      {rendertTabs()}
+      {/* Display additional withdraw button if connected wallet is owner */}
+      
+      { 
+      // @ts-ignore
+      address && address.toLowerCase() === daoOwner.data.toLowerCase() 
+      ? (
+        <div>
+          {loading ? (
+            <button className={styles.button}>Loading...</button>
+          ) : (
+            <button className={styles.button} onClick={withdrawDAOEther}>
+              Withdraw DAO ETH
+            </button>
+          )}
+        </div>
+      ) : (
+        ""
+      )}
+    </div>
+    <div>
+      <img className={styles.image} src="https://i.imgur.com/buNhbF7.png" />
+    </div>
+  </div>
   )
 }
