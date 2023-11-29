@@ -346,7 +346,7 @@ export default function Home() {
       
       { 
       // @ts-ignore
-      address && address.toLowerCase() === daoOwner.data.toLowerCase() 
+      account.address && account.address.toLowerCase() === daoOwner.data.toLowerCase() 
       ? (
         <div>
           {loading ? (
